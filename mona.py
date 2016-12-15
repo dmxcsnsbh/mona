@@ -17635,6 +17635,26 @@ def main(args):
 			return int(''.join(addy.split('`')), 16)
 
 
+		def getClassName(addy):
+			"""
+			Returns symbol name closest to the specified address
+			Only works in WinDBG
+			Returns function name and optional offset
+			"""
+			fname = ""
+			if arch == 64:
+				cmd2run = "ln 0x%016x" % addy
+			else:
+				cmd2run = "ln 0x%08x" % addy
+			output = dbg.nativeCommand(cmd2run)
+			for line in output.split("\n"):
+				if "|" in line:
+					lineparts = line.split("|")[0]
+					fname = lineparts[lineparts.index(' '):].strip()
+					return fname
+			return null
+
+
 		def checkObject(args):
 			# TODO: Add 32 bits support
 			if args[1].lower() in Registers64BitsOrder:
@@ -17642,7 +17662,8 @@ def main(args):
 			else:
 				address = parseAddress(args[1])
 			vtbl_addr = ptrPtr(address)
-			fname,offset = getFunctionName(vtbl_addr)
+			fname = getClassName(vtbl_addr)
+			dbg.log(fname)
 			if fname.endswith("::`vftable'"):
 				fname = fname[:-11]
 			# dbg.log("Class Name is %s" % fname)
@@ -17656,7 +17677,7 @@ def main(args):
 			# TODO: Add 32 bits support
 			address = ptrPtr(reg('r8')+8)
 			vtbl_addr = ptrPtr(address)
-			fname,offset = getFunctionName(vtbl_addr)
+			fname = getClassName(vtbl_addr)
 			if fname.endswith("::`vftable'"):
 				fname = fname[:-11]
 			# dbg.log("Class Name is %s" % fname)
