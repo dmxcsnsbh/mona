@@ -51,7 +51,7 @@ except:
 		from pykd import *
 		import windbglib as dbglib
 		from windbglib import LogBpHook
-		dbglib.checkVersion()
+		# dbglib.checkVersion()
 		arch = dbglib.getArchitecture()
 		__DEBUGGERAPP__ = "WinDBG"
 	except SystemExit, e:
@@ -390,7 +390,10 @@ def getFunctionName(addy):
 	"""
 	fname = ""
 	foffset = ""
-	cmd2run = "ln 0x%08x" % addy
+	if arch == 64:
+		cmd2run = "ln 0x%016x" % addy
+	else:
+		cmd2run = "ln 0x%08x" % addy
 	output = dbg.nativeCommand(cmd2run)
 	for line in output.split("\n"):
 		if "|" in line:
@@ -3796,7 +3799,7 @@ class MnPointer:
 		self.address = address
 		
 		# define the characteristics of the pointer
-		byte1,byte2,byte3,byte4 = splitAddress(address)
+
 		NullRange 			= [0]
 		AsciiRange			= range(1,128)
 		AsciiPrintRange		= range(20,127)
@@ -3806,20 +3809,35 @@ class MnPointer:
 		AsciiNumericRange   = range(48,58)
 		AsciiSpaceRange     = [32]
 		
+		if arch == 32:
+			byte1,byte2,byte3,byte4 = splitAddress(address)
+			# Nulls
+			self.hasNulls = (byte1 == 0) or (byte2 == 0) or (byte3 == 0) or (byte4 == 0)
+			
+			# Starts with null
+			self.startsWithNull = (byte1 == 0)
+			
+			# Unicode
+			self.isUnicode = ((byte1 == 0) and (byte3 == 0))
+			
+			# Unicode reversed
+			self.isUnicodeRev = ((byte2 == 0) and (byte4 == 0))		
+		else:
+			byte1,byte2,byte3,byte4,byte5,byte6,byte7,byte8 = splitAddress(address)
+			# Nulls
+			self.hasNulls = (byte1 == 0) or (byte2 == 0) or (byte3 == 0) or (byte4 == 0) or (byte5 == 0) or (byte6 == 0) or (byte7 == 0) or (byte8 == 0)
+			
+			# Starts with null
+			self.startsWithNull = (byte1 == 0)
+			
+			# Unicode
+			self.isUnicode = ((byte1 == 0) and (byte3 == 0)) and ((byte5 == 0) and (byte7 == 0))
+			
+			# Unicode reversed
+			self.isUnicodeRev = ((byte2 == 0) and (byte4 == 0))	and ((byte6 == 0) and (byte8 == 0))	
+		
 		self.HexAddress = toHex(address)
-		
-		# Nulls
-		self.hasNulls = (byte1 == 0) or (byte2 == 0) or (byte3 == 0) or (byte4 == 0)
-		
-		# Starts with null
-		self.startsWithNull = (byte1 == 0)
-		
-		# Unicode
-		self.isUnicode = ((byte1 == 0) and (byte3 == 0))
-		
-		# Unicode reversed
-		self.isUnicodeRev = ((byte2 == 0) and (byte4 == 0))		
-		
+
 		# Unicode transform
 		self.unicodeTransform = UnicodeTransformInfo(self.HexAddress) 
 		
@@ -17609,10 +17627,52 @@ def main(args):
 			return			
 
 
+		# ----- My customized functions ----- #
+
+		Registers64BitsOrder = ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"]
+
+		def parseAddress(addy):
+			return int(''.join(addy.split('`')), 16)
+
+
+		def checkObject(args):
+			# TODO: Add 32 bits support
+			if args[1].lower() in Registers64BitsOrder:
+				address = reg(args[1].lower())
+			else:
+				address = parseAddress(args[1])
+			vtbl_addr = ptrPtr(address)
+			fname,offset = getFunctionName(vtbl_addr)
+			if fname.endswith("::`vftable'"):
+				fname = fname[:-11]
+			# dbg.log("Class Name is %s" % fname)
+			cmd2run = "dt %s 0n%s" % (fname, str(address))
+			output = dbg.nativeCommand(cmd2run)
+			for line in output.split("\n"):
+				dbg.log(line)
+
+
+		def checkPrint(args):
+			# TODO: Add 32 bits support
+			address = ptrPtr(reg('r8')+8)
+			vtbl_addr = ptrPtr(address)
+			fname,offset = getFunctionName(vtbl_addr)
+			if fname.endswith("::`vftable'"):
+				fname = fname[:-11]
+			# dbg.log("Class Name is %s" % fname)
+			cmd2run = "dt %s 0n%s" % (fname, str(address))
+			output = dbg.nativeCommand(cmd2run)
+			for line in output.split("\n"):
+				dbg.log(line)
+
+
 		# ----- Finally, some main stuff ----- #
 		
 		# All available commands and their Usage :
 		
+		checkobjUsage = """Show the object information of the address or a register"""
+		checkprintUsage = """Show the object information of print arguement"""
+
 		sehUsage = """Default module criteria : non safeseh, non aslr, non rebase
 This function will retrieve all stackpivot pointers that will bring you back to nseh in a seh overwrite exploit
 Optional argument: 
@@ -18052,7 +18112,8 @@ Arguments:
     -save     : save current state to disk 
     -diff     : compare current state with previously saved state""" 
 
-
+		commands["checkobj"] 		= MnCommand("checkobj", "Show infomation of the objects",checkobjUsage, checkObject,"ck")
+		commands["checkprint"] 		= MnCommand("checkobj", "Show infomation of the print arguement",checkprintUsage, checkPrint,"ckp")
 		commands["seh"] 			= MnCommand("seh", "Find pointers to assist with SEH overwrite exploits",sehUsage, procFindSEH)
 		commands["config"] 			= MnCommand("config","Manage configuration file (mona.ini)",configUsage,procConfig,"conf")
 		commands["jmp"]				= MnCommand("jmp","Find pointers that will allow you to jump to a register",jmpUsage,procFindJMP, "j")
@@ -18160,8 +18221,8 @@ Arguments:
 					#last = ""
 		# if a command only requires a value and not a switch ?
 		# then we'll drop the value into dictionary with key "?"
-		if len(args) > 1 and args[1][0] != "-":
-			opts["?"] = args[1]
+		# if len(args) > 1 and args[1][0] != "-":
+		#	opts["?"] = args[1]
 	
 		
 		if len(args) < 1:
@@ -18176,7 +18237,11 @@ Arguments:
 			arguments.remove("-showargs")			
 		
 		# ----- execute the chosen command ----- #
-		if command in commands:
+		if command == 'ck':
+			commands['checkobj'].parseProc(args)
+		elif command == 'ckp':
+			commands['checkprint'].parseProc(args)
+		elif command in commands:
 			if command.lower().strip() == "help":
 				commands[command].parseProc(args)
 			else:
